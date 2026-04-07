@@ -19,21 +19,47 @@ export default function StaffDashboard() {
   const [issueForm, setIssueForm] = useState({ readerEmail: '', bookId: '', dueDays: '14' });
   const [txMsg, setTxMsg] = useState({ text: '', type: '' });
 
+  // Autocomplete state for issue form
+  const [readerQuery, setReaderQuery] = useState('');
+  const [readerSuggestions, setReaderSuggestions] = useState([]);
+  const [showReaderDropdown, setShowReaderDropdown] = useState(false);
+  const [bookQuery, setBookQuery] = useState('');
+  const [bookSuggestions, setBookSuggestions] = useState([]);
+  const [showBookDropdown, setShowBookDropdown] = useState(false);
+  const [selectedBookLabel, setSelectedBookLabel] = useState('');
+
+  // Requests state
+  const [requests, setRequests] = useState([]);
+  const [loadingRequests, setLoadingRequests] = useState(true);
+  const [reqMsg, setReqMsg] = useState({ text: '', type: '' });
+  const [approvingId, setApprovingId] = useState(null);
+
+  // Book search state
+  const [bookSearch, setBookSearch] = useState('');
+
   useEffect(() => {
     fetchBooks();
     fetchTransactions();
+    fetchRequests();
   }, []);
 
   // ---- Books ----
-  const fetchBooks = async () => {
+  const fetchBooks = async (search = '') => {
     setLoadingBooks(true);
     try {
-      setBooks(await apiFetch('/books'));
+      const query = search.trim() ? `?search=${encodeURIComponent(search.trim())}` : '';
+      setBooks(await apiFetch(`/books${query}`));
     } catch (err) {
       console.error(err);
     } finally {
       setLoadingBooks(false);
     }
+  };
+
+  const handleBookSearch = (e) => {
+    const val = e.target.value;
+    setBookSearch(val);
+    fetchBooks(val);
   };
 
   const handleBookSubmit = async (e) => {
@@ -101,12 +127,70 @@ export default function StaffDashboard() {
     try {
       await apiFetch('/transactions/issue', { method: 'POST', body: issueForm });
       setIssueForm({ readerEmail: '', bookId: '', dueDays: '14' });
+      setReaderQuery('');
+      setBookQuery('');
+      setSelectedBookLabel('');
       setTxMsg({ text: 'Book issued successfully', type: 'success' });
       fetchTransactions();
       fetchBooks();
     } catch (err) {
       setTxMsg({ text: err.message, type: 'error' });
     }
+  };
+
+  // ---- Autocomplete handlers ----
+  const handleReaderSearch = async (e) => {
+    const val = e.target.value;
+    setReaderQuery(val);
+    setIssueForm({ ...issueForm, readerEmail: val });
+    if (val.trim().length < 2) {
+      setReaderSuggestions([]);
+      setShowReaderDropdown(false);
+      return;
+    }
+    try {
+      const users = await apiFetch(`/users?search=${encodeURIComponent(val.trim())}`);
+      const readers = users.filter((u) => u.role === 'reader');
+      setReaderSuggestions(readers);
+      setShowReaderDropdown(readers.length > 0);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const selectReader = (reader) => {
+    setReaderQuery(reader.email);
+    setIssueForm({ ...issueForm, readerEmail: reader.email });
+    setShowReaderDropdown(false);
+    setReaderSuggestions([]);
+  };
+
+  const handleBookAutocomplete = async (e) => {
+    const val = e.target.value;
+    setBookQuery(val);
+    setSelectedBookLabel('');
+    setIssueForm({ ...issueForm, bookId: '' });
+    if (val.trim().length < 2) {
+      setBookSuggestions([]);
+      setShowBookDropdown(false);
+      return;
+    }
+    try {
+      const results = await apiFetch(`/books?search=${encodeURIComponent(val.trim())}`);
+      const available = results.filter((b) => b.availableCopies > 0);
+      setBookSuggestions(available);
+      setShowBookDropdown(available.length > 0);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const selectBook = (book) => {
+    setBookQuery('');
+    setSelectedBookLabel(`${book.title} — ${book.author} (${book.availableCopies} left)`);
+    setIssueForm({ ...issueForm, bookId: book._id });
+    setShowBookDropdown(false);
+    setBookSuggestions([]);
   };
 
   const handleReturn = async (id) => {
@@ -124,6 +208,34 @@ export default function StaffDashboard() {
 
   const formatDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN') : '—');
 
+  // ---- Requests ----
+  const fetchRequests = async () => {
+    setLoadingRequests(true);
+    try {
+      setRequests(await apiFetch('/transactions/requests/pending'));
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingRequests(false);
+    }
+  };
+
+  const handleApprove = async (id) => {
+    setApprovingId(id);
+    setReqMsg({ text: '', type: '' });
+    try {
+      await apiFetch(`/transactions/${id}/approve`, { method: 'PUT' });
+      setReqMsg({ text: 'Request approved and book issued', type: 'success' });
+      fetchRequests();
+      fetchTransactions();
+      fetchBooks(bookSearch);
+    } catch (err) {
+      setReqMsg({ text: err.message, type: 'error' });
+    } finally {
+      setApprovingId(null);
+    }
+  };
+
   return (
     <div className="dashboard" id="staff-dashboard">
       <header className="dash-header">
@@ -136,6 +248,9 @@ export default function StaffDashboard() {
       <div className="tab-bar" id="staff-tabs">
         <button className={`tab-btn ${tab === 'books' ? 'active' : ''}`} onClick={() => setTab('books')}>
           Books
+        </button>
+        <button className={`tab-btn ${tab === 'requests' ? 'active' : ''}`} onClick={() => setTab('requests')}>
+          Requests {requests.length > 0 && <span className="badge badge-red" style={{ marginLeft: '0.35rem' }}>{requests.length}</span>}
         </button>
         <button className={`tab-btn ${tab === 'transactions' ? 'active' : ''}`} onClick={() => setTab('transactions')}>
           Transactions
@@ -212,6 +327,17 @@ export default function StaffDashboard() {
             </form>
           </div>
 
+          <div className="section-toolbar">
+            <input
+              type="text"
+              className="input-search"
+              placeholder="Search by title or author…"
+              value={bookSearch}
+              onChange={handleBookSearch}
+              id="staff-book-search"
+            />
+          </div>
+
           {loadingBooks ? (
             <p className="loading-text">Loading…</p>
           ) : books.length === 0 ? (
@@ -256,6 +382,63 @@ export default function StaffDashboard() {
         </section>
       )}
 
+      {/* Requests Tab */}
+      {tab === 'requests' && (
+        <section className="dash-section">
+          {reqMsg.text && (
+            <div className={`alert alert-${reqMsg.type}`}>{reqMsg.text}</div>
+          )}
+
+          <div className="form-card">
+            <h2>Pending Book Requests</h2>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '-0.5rem' }}>
+              Readers have requested the following books. Approve to issue them.
+            </p>
+          </div>
+
+          {loadingRequests ? (
+            <p className="loading-text">Loading requests…</p>
+          ) : requests.length === 0 ? (
+            <p className="empty-text">No pending requests.</p>
+          ) : (
+            <div className="table-wrap">
+              <table id="pending-requests-table">
+                <thead>
+                  <tr>
+                    <th>Reader</th>
+                    <th>Book</th>
+                    <th>Requested On</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {requests.map((r) => (
+                    <tr key={r._id}>
+                      <td>
+                        <div className="cell-primary">{r.readerId?.name || '—'}</div>
+                        <div className="cell-sub">{r.readerId?.email || ''}</div>
+                      </td>
+                      <td className="cell-primary">{r.bookId?.title || '—'}</td>
+                      <td>{formatDate(r.createdAt)}</td>
+                      <td>
+                        <button
+                          className="btn btn-sm btn-primary"
+                          onClick={() => handleApprove(r._id)}
+                          disabled={approvingId === r._id}
+                          id={`approve-${r._id}`}
+                        >
+                          {approvingId === r._id ? 'Approving…' : 'Approve Request'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
       {/* Transactions Tab */}
       {tab === 'transactions' && (
         <section className="dash-section">
@@ -267,32 +450,73 @@ export default function StaffDashboard() {
             <h2>Issue a Book</h2>
             <form onSubmit={handleIssue} className="inline-form" id="issue-form">
               <div className="form-grid">
-                <div className="form-group">
-                  <label>Reader Email</label>
+                <div className="form-group" style={{ position: 'relative' }}>
+                  <label>Reader (search by name or email)</label>
                   <input
-                    type="email"
-                    value={issueForm.readerEmail}
-                    onChange={(e) => setIssueForm({ ...issueForm, readerEmail: e.target.value })}
-                    placeholder="reader@example.com"
+                    type="text"
+                    value={readerQuery}
+                    onChange={handleReaderSearch}
+                    onFocus={() => readerSuggestions.length > 0 && setShowReaderDropdown(true)}
+                    onBlur={() => setTimeout(() => setShowReaderDropdown(false), 200)}
+                    placeholder="Type to search reader…"
                     required
+                    autoComplete="off"
+                    id="reader-search-input"
                   />
-                </div>
-                <div className="form-group">
-                  <label>Book</label>
-                  <select
-                    value={issueForm.bookId}
-                    onChange={(e) => setIssueForm({ ...issueForm, bookId: e.target.value })}
-                    required
-                  >
-                    <option value="">Select a book</option>
-                    {books
-                      .filter((b) => b.availableCopies > 0)
-                      .map((b) => (
-                        <option key={b._id} value={b._id}>
-                          {b.title} — {b.author} ({b.availableCopies} left)
-                        </option>
+                  {showReaderDropdown && (
+                    <div className="autocomplete-dropdown" id="reader-suggestions">
+                      {readerSuggestions.map((r) => (
+                        <div
+                          key={r._id}
+                          className="autocomplete-item"
+                          onMouseDown={() => selectReader(r)}
+                        >
+                          <span className="autocomplete-name">{r.name}</span>
+                          <span className="autocomplete-sub">{r.email}</span>
+                        </div>
                       ))}
-                  </select>
+                    </div>
+                  )}
+                </div>
+                <div className="form-group" style={{ position: 'relative' }}>
+                  <label>Book (search by title or author)</label>
+                  {selectedBookLabel ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span style={{ fontSize: '0.85rem', flex: 1 }}>{selectedBookLabel}</span>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-ghost"
+                        onClick={() => { setSelectedBookLabel(''); setIssueForm({ ...issueForm, bookId: '' }); }}
+                      >
+                        Change
+                      </button>
+                    </div>
+                  ) : (
+                    <input
+                      type="text"
+                      value={bookQuery}
+                      onChange={handleBookAutocomplete}
+                      onFocus={() => bookSuggestions.length > 0 && setShowBookDropdown(true)}
+                      onBlur={() => setTimeout(() => setShowBookDropdown(false), 200)}
+                      placeholder="Type to search book…"
+                      autoComplete="off"
+                      id="book-search-input"
+                    />
+                  )}
+                  {showBookDropdown && (
+                    <div className="autocomplete-dropdown" id="book-suggestions">
+                      {bookSuggestions.map((b) => (
+                        <div
+                          key={b._id}
+                          className="autocomplete-item"
+                          onMouseDown={() => selectBook(b)}
+                        >
+                          <span className="autocomplete-name">{b.title}</span>
+                          <span className="autocomplete-sub">{b.author} • {b.availableCopies} available</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div className="form-group">
                   <label>Due in (days)</label>
@@ -305,7 +529,7 @@ export default function StaffDashboard() {
                 </div>
               </div>
               <div className="form-actions">
-                <button type="submit" className="btn btn-primary" id="issue-submit">
+                <button type="submit" className="btn btn-primary" id="issue-submit" disabled={!issueForm.readerEmail || !issueForm.bookId}>
                   Issue Book
                 </button>
               </div>

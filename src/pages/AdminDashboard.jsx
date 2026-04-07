@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../api';
 
 export default function AdminDashboard() {
+  const { user: currentUser } = useAuth();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState({ text: '', type: '' });
@@ -30,6 +32,18 @@ export default function AdminDashboard() {
         body: { role: newRole },
       });
       setMsg({ text: `Role updated to ${newRole}. The user must re-login to see changes.`, type: 'success' });
+      fetchUsers();
+    } catch (err) {
+      setMsg({ text: err.message, type: 'error' });
+    }
+  };
+
+  const deleteUser = async (userId, userName) => {
+    if (!confirm(`Delete user "${userName}"? This action cannot be undone.`)) return;
+    setMsg({ text: '', type: '' });
+    try {
+      await apiFetch(`/users/${userId}`, { method: 'DELETE' });
+      setMsg({ text: `User "${userName}" deleted successfully`, type: 'success' });
       fetchUsers();
     } catch (err) {
       setMsg({ text: err.message, type: 'error' });
@@ -141,6 +155,15 @@ export default function AdminDashboard() {
                           onClick={() => updateRole(u._id, 'reader')}
                         >
                           Demote to Reader
+                        </button>
+                      )}
+                      {u.role !== 'admin' && (
+                        <button
+                          className="btn btn-sm btn-danger-ghost"
+                          onClick={() => deleteUser(u._id, u.name)}
+                          id={`delete-user-${u._id}`}
+                        >
+                          Delete
                         </button>
                       )}
                       {u.role === 'admin' && (

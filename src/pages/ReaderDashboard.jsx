@@ -13,10 +13,14 @@ export default function ReaderDashboard() {
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [msg, setMsg] = useState('');
+  const [requestedBooks, setRequestedBooks] = useState(new Set());
+  const [requestingId, setRequestingId] = useState(null);
+  const [requestMsg, setRequestMsg] = useState({ text: '', type: '' });
 
   useEffect(() => {
     fetchBooks();
     fetchTransactions();
+    fetchMyRequests();
   }, []);
 
   const fetchBooks = async () => {
@@ -55,6 +59,30 @@ export default function ReaderDashboard() {
       setBooks(data);
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const fetchMyRequests = async () => {
+    try {
+      const data = await apiFetch('/transactions/my/requests');
+      const ids = new Set(data.map((r) => r.bookId?._id || r.bookId));
+      setRequestedBooks(ids);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleRequestBook = async (bookId) => {
+    setRequestingId(bookId);
+    setRequestMsg({ text: '', type: '' });
+    try {
+      await apiFetch('/transactions/request', { method: 'POST', body: { bookId } });
+      setRequestMsg({ text: 'Book request sent successfully!', type: 'success' });
+      setRequestedBooks((prev) => new Set(prev).add(bookId));
+    } catch (err) {
+      setRequestMsg({ text: err.message, type: 'error' });
+    } finally {
+      setRequestingId(null);
     }
   };
 
@@ -112,6 +140,9 @@ export default function ReaderDashboard() {
               id="book-search"
             />
           </div>
+          {requestMsg.text && (
+            <div className={`alert alert-${requestMsg.type}`}>{requestMsg.text}</div>
+          )}
           {loadingBooks ? (
             <p className="loading-text">Loading books…</p>
           ) : books.length === 0 ? (
@@ -126,6 +157,7 @@ export default function ReaderDashboard() {
                     <th>ISBN</th>
                     <th>Genre</th>
                     <th>Available</th>
+                    <th>Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -139,6 +171,22 @@ export default function ReaderDashboard() {
                         <span className={`badge ${b.availableCopies > 0 ? 'badge-green' : 'badge-red'}`}>
                           {b.availableCopies} / {b.totalCopies}
                         </span>
+                      </td>
+                      <td>
+                        {requestedBooks.has(b._id) ? (
+                          <button className="btn btn-sm btn-ghost" disabled>Requested</button>
+                        ) : b.availableCopies <= 0 ? (
+                          <button className="btn btn-sm btn-ghost" disabled>Unavailable</button>
+                        ) : (
+                          <button
+                            className="btn btn-sm btn-primary"
+                            onClick={() => handleRequestBook(b._id)}
+                            disabled={requestingId === b._id}
+                            id={`request-book-${b._id}`}
+                          >
+                            {requestingId === b._id ? 'Requesting…' : 'Request Book'}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
